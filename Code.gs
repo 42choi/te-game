@@ -88,18 +88,24 @@ function doGet(e) {
   }
 }
 
-// 반별 오늘 순위: 학생마다 최고점 1개만
+// 오늘 순위: 학생마다 최고점 1개만. cls=all 이면 전체 반 통합
 function rank_(p) {
-  const cls = String(p.cls || ''), me = parseInt(p.me, 10), today = today_();
+  const cls = String(p.cls || ''), all = cls === 'all', today = today_();
+  const me = parseInt(p.me, 10), meCls = String(p.meCls || cls);
   const best = {};
   rows_().forEach(function (r) {
-    if (r.cls !== cls || r.date !== today) return;
-    if (!best[r.num] || r.score > best[r.num].score) best[r.num] = { nick: r.nick, score: r.score, num: r.num };
+    if (r.date !== today || (!all && r.cls !== cls)) return;
+    const k = r.cls + '-' + r.num;
+    if (!best[k] || r.score > best[k].score) best[k] = { nick: r.nick, score: r.score, num: r.num, cls: r.cls };
   });
   const list = Object.keys(best).map(function (k) { return best[k]; })
     .sort(function (a, b) { return b.score - a.score; })
-    .slice(0, 40)
-    .map(function (x) { return { nick: x.nick, score: x.score, me: x.num === me }; }); // 번호는 공개하지 않음
+    .slice(0, 50)
+    .map(function (x) { // 번호는 공개하지 않음
+      const o = { nick: x.nick, score: x.score, me: x.num === me && x.cls === meCls };
+      if (all) o.cls = x.cls;
+      return o;
+    });
   return { ok: true, rank: list };
 }
 

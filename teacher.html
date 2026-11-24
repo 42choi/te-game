@@ -101,9 +101,7 @@ let STU = [], sortK = 'num', sortDir = 1;
 
 $('go').onclick = load;
 $('proj').onclick = () => {
-  const c = $('cls').value;
-  if (c === 'all') { $('msg').textContent = '프로젝터 순위는 반을 하나 골라야 해요'; return; }
-  window.open('index.html?board=' + c, '_blank');
+  window.open('index.html?board=' + $('cls').value, '_blank'); // 전체 선택 시 전체 순위
 };
 
 async function load(){
