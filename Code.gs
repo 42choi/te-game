@@ -23,7 +23,7 @@ function sheet_() {
 }
 function today_() { return Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy-MM-dd'); }
 function out_(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
-function dateStr_(v) { return v instanceof Date ? Utilities.formatDate(v, 'Asia/Seoul', 'yyyy-MM-dd') : String(v); }
+function dateStr_(v) { return (v && typeof v.getTime === 'function') ? Utilities.formatDate(v, 'Asia/Seoul', 'yyyy-MM-dd') : String(v).slice(0, 10); }
 
 // 점수는 학생 기기가 보낸 값을 믿지 않고, 풀이 기록으로 다시 계산합니다 (게임과 같은 규칙)
 function score_(details) {
@@ -68,7 +68,7 @@ function rows_() {
   return v.map(function (r) {
     let det = [];
     try { det = JSON.parse(r[9] || '[]'); } catch (e) {}
-    return { date: dateStr_(r[1]), cls: String(r[2]), num: Number(r[3]), nick: String(r[4]), score: Number(r[5]),
+    return { date: dateStr_(r[0] || r[1]), cls: String(r[2]), num: Number(r[3]), nick: String(r[4]), score: Number(r[5]),
              ok: Number(r[6]), ng: Number(r[7]), det: det };
   });
 }
