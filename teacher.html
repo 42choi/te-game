@@ -80,7 +80,7 @@ td.r,th.r{text-align:right;font-variant-numeric:tabular-nums}
   <div class="box">
     <h2>학생별 결과 <span style="font-weight:400;font-size:12px;color:var(--muted)">(머리글을 누르면 정렬)</span></h2>
     <table><thead><tr>
-      <th data-k="cls">반</th><th data-k="num">번호</th><th data-k="nick">닉네임</th>
+      <th data-k="sid">학번</th><th data-k="name">이름</th>
       <th class="r" data-k="plays">플레이</th><th class="r" data-k="best">최고점</th><th class="r" data-k="acc">정답률</th><th data-k="weak">가장 많이 틀린 그룹</th>
     </tr></thead><tbody id="students"></tbody></table>
   </div>
@@ -97,7 +97,7 @@ const today = new Date(Date.now() + 9*3600e3).toISOString().slice(0,10); // 한�
 $('date').value = today;
 try { $('key').value = sessionStorage.getItem('teg-key') || ''; } catch(e) {}
 $('alldate').onchange = () => { $('date').disabled = $('alldate').checked; };
-let STU = [], sortK = 'num', sortDir = 1;
+let STU = [], sortK = 'sid', sortDir = 1;
 
 $('go').onclick = load;
 $('proj').onclick = () => {
@@ -137,13 +137,13 @@ function render(j){
 function drawStudents(){
   const rows = STU.slice().sort((a,b) => {
     const x = a[sortK], y = b[sortK];
-    return (typeof x === 'number' ? x - y : String(x).localeCompare(String(y))) * sortDir || a.cls - b.cls || a.num - b.num;
+    return (typeof x === 'number' ? x - y : String(x).localeCompare(String(y))) * sortDir || String(a.sid).localeCompare(String(b.sid));
   });
   $('students').innerHTML = rows.length ? rows.map(s => {
     const c = s.acc >= 80 ? 'hi' : s.acc >= 50 ? 'mid' : 'low';
-    return `<tr><td>${s.cls}</td><td>${s.num}</td><td>${esc(s.nick)}</td><td class="r">${s.plays}</td><td class="r">${s.best}</td>`+
+    return `<tr><td>${esc(s.sid)}</td><td>${esc(s.name)}</td><td class="r">${s.plays}</td><td class="r">${s.best}</td>`+
       `<td class="r"><span class="pill ${c}">${s.acc}%</span></td><td class="jp">${s.weak ? LABEL[s.weak]+' ('+s.weakCount+'회)' : '—'}</td></tr>`;
-  }).join('') : '<tr><td colspan="7" style="color:var(--muted)">기록이 없어요</td></tr>';
+  }).join('') : '<tr><td colspan="6" style="color:var(--muted)">기록이 없어요</td></tr>';
 }
 document.querySelectorAll('th[data-k]').forEach(th => th.onclick = () => {
   const k = th.dataset.k; sortDir = (sortK === k) ? -sortDir : (['best','acc','plays'].includes(k) ? -1 : 1); sortK = k; drawStudents();

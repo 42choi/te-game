@@ -1,29 +1,45 @@
 /**
  * て형 조립 챌린지 — 점수 저장 서버 (Google Apps Script)
  * 구글 스프레드시트 > 확장 프로그램 > Apps Script 에 이 코드를 통째로 붙여넣으세요.
+ *
+ * 시트 2개를 자동으로 만듭니다.
+ *  - 「기록」        : 모든 판을 한 줄씩 (학번·이름·점수·풀이 상세)
+ *  - 「학생별 최고점」 : 학번마다 한 줄. 같은 학번은 가장 높은 점수만 남음
  */
 
-// ★ 선생님 분석 페이지 비밀번호 — 반드시 바꾸세요
+// ★ 선생님 분석 페이지 비밀번호
 const TEACHER_KEY = '여기에-비밀번호';
 
-const SHEET_NAME = 'results';
-const HEAD = ['시각', '날짜', '반', '번호', '닉네임', '점수', '정답', '오답', '최대콤보', '상세'];
+const LOG_SHEET = '기록';
+const BEST_SHEET = '학생별 최고점';
+const LOG_HEAD = ['시각', '날짜', '학번', '이름', '학년', '반', '번호', '점수', '정답', '오답', '최대콤보', '상세'];
+const BEST_HEAD = ['학번', '이름', '학년', '반', '번호', '최고점', '최고점 날짜', '플레이 횟수', '최근 플레이'];
 const VALID_GROUPS = ['うつる', 'むぶぬ', 'く', 'ぐ', 'す', 'いく'];
 
-function sheet_() {
+function sheet_(name, head, textCols) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sh = ss.getSheetByName(SHEET_NAME);
+  let sh = ss.getSheetByName(name);
   if (!sh) {
-    sh = ss.insertSheet(SHEET_NAME);
-    sh.appendRow(HEAD);
+    sh = ss.insertSheet(name);
+    textCols.forEach(function (c) { sh.getRange(c + ':' + c).setNumberFormat('@'); }); // 글자 그대로 보관
+    sh.appendRow(head);
     sh.setFrozenRows(1);
-    sh.getRange('B:B').setNumberFormat('@'); // 날짜를 글자로 보관
   }
   return sh;
 }
+function logSheet_() { return sheet_(LOG_SHEET, LOG_HEAD, ['B', 'C']); }
+function bestSheet_() { return sheet_(BEST_SHEET, BEST_HEAD, ['A', 'G']); }
+
 function today_() { return Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy-MM-dd'); }
 function out_(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
 function dateStr_(v) { return (v && typeof v.getTime === 'function') ? Utilities.formatDate(v, 'Asia/Seoul', 'yyyy-MM-dd') : String(v).slice(0, 10); }
+
+// 학번 4자리: 학년1 + 반1 + 번호2  (예: 2612 = 2학년 6반 12번)
+function parseSid_(sid) {
+  const m = /^([1-3])([1-9])(\d\d)$/.exec(String(sid || '').trim());
+  if (!m || +m[3] < 1 || +m[3] > 40) return null;
+  return { sid: m[0], grade: +m[1], cls: +m[2], num: +m[3] };
+}
 
 // 점수는 학생 기기가 보낸 값을 믿지 않고, 풀이 기록으로 다시 계산합니다 (게임과 같은 규칙)
 function score_(details) {
@@ -39,38 +55,46 @@ function score_(details) {
 function doPost(e) {
   try {
     const d = JSON.parse(e.postData.contents);
-    const cls = String(d.cls || '');
-    const num = parseInt(d.num, 10);
-    const nick = String(d.nick || '').trim().slice(0, 10);
-    if (!/^[1-6]$/.test(cls) || !(num >= 1 && num <= 40) || !nick) return out_({ ok: false, error: '입력값 오류' });
+    const st = parseSid_(d.sid);
+    const name = String(d.name || '').trim().slice(0, 10);
+    if (!st || !name) return out_({ ok: false, error: '학번 또는 이름 오류' });
 
-    // 3분 동안 현실적으로 풀 수 있는 양만 인정
     const details = (Array.isArray(d.details) ? d.details : []).slice(0, 150)
       .filter(function (x) { return x && VALID_GROUPS.indexOf(x.g) >= 0; })
       .map(function (x) { return { v: String(x.v).slice(0, 8), g: x.g, a: String(x.a || '').slice(0, 4), ok: x.ok ? 1 : 0 }; });
     const ok = details.filter(function (x) { return x.ok; }).length;
     const s = score_(details);
+    const now = new Date(), today = today_();
 
     const lock = LockService.getScriptLock();
-    lock.waitLock(10000);
+    lock.waitLock(15000);
+    let best, isNew;
     try {
-      sheet_().appendRow([new Date(), today_(), Number(cls), num, nick, s.score, ok, details.length - ok, s.maxCombo, JSON.stringify(details)]);
+      logSheet_().appendRow([now, today, st.sid, name, st.grade, st.cls, st.num, s.score, ok, details.length - ok, s.maxCombo, JSON.stringify(details)]);
+
+      // 학생별 최고점 갱신 (같은 학번은 한 줄, 높은 점수만)
+      const bs = bestSheet_();
+      const n = bs.getLastRow() - 1;
+      let row = -1;
+      if (n > 0) {
+        const ids = bs.getRange(2, 1, n, 1).getValues();
+        for (let i = 0; i < n; i++) if (String(ids[i][0]) === st.sid) { row = i + 2; break; }
+      }
+      if (row < 0) {
+        best = s.score; isNew = true;
+        bs.appendRow([st.sid, name, st.grade, st.cls, st.num, best, today, 1, now]);
+      } else {
+        const r = bs.getRange(row, 1, 1, 9).getValues()[0];
+        best = Number(r[5]) || 0; let bestDate = r[6];
+        isNew = s.score > best;
+        if (isNew) { best = s.score; bestDate = today; }
+        bs.getRange(row, 1, 1, 9).setValues([[st.sid, name, st.grade, st.cls, st.num, best, bestDate, (Number(r[7]) || 0) + 1, now]]);
+      }
     } finally { lock.releaseLock(); }
-    return out_({ ok: true, score: s.score });
+    return out_({ ok: true, score: s.score, best: best, isNew: isNew });
   } catch (err) {
     return out_({ ok: false, error: String(err) });
   }
-}
-
-function rows_() {
-  const v = sheet_().getDataRange().getValues();
-  v.shift();
-  return v.map(function (r) {
-    let det = [];
-    try { det = JSON.parse(r[9] || '[]'); } catch (e) {}
-    return { date: dateStr_(r[0] || r[1]), cls: String(r[2]), num: Number(r[3]), nick: String(r[4]), score: Number(r[5]),
-             ok: Number(r[6]), ng: Number(r[7]), det: det };
-  });
 }
 
 /* ---------- 조회 ---------- */
@@ -88,39 +112,48 @@ function doGet(e) {
   }
 }
 
-// 오늘 순위: 학생마다 최고점 1개만. cls=all 이면 전체 반 통합
+// 순위: 학생별 최고점(전체 기간) 기준. cls=all 이면 전체 반 통합
 function rank_(p) {
-  const cls = String(p.cls || ''), all = cls === 'all', today = today_();
-  const me = parseInt(p.me, 10), meCls = String(p.meCls || cls);
-  const best = {};
-  rows_().forEach(function (r) {
-    if (r.date !== today || (!all && r.cls !== cls)) return;
-    const k = r.cls + '-' + r.num;
-    if (!best[k] || r.score > best[k].score) best[k] = { nick: r.nick, score: r.score, num: r.num, cls: r.cls };
-  });
-  const list = Object.keys(best).map(function (k) { return best[k]; })
+  const cls = String(p.cls || ''), all = cls === 'all', me = String(p.me || '');
+  const bs = bestSheet_();
+  const n = bs.getLastRow() - 1;
+  const rows = n > 0 ? bs.getRange(2, 1, n, 9).getValues() : [];
+  const list = rows
+    .map(function (r) { return { sid: String(r[0]), name: String(r[1]), cls: String(r[3]), score: Number(r[5]) || 0 }; })
+    .filter(function (r) { return all || r.cls === cls; })
     .sort(function (a, b) { return b.score - a.score; })
     .slice(0, 50)
-    .map(function (x) { // 번호는 공개하지 않음
-      const o = { nick: x.nick, score: x.score, me: x.num === me && x.cls === meCls };
+    .map(function (x) { // 학번은 공개하지 않음
+      const o = { name: x.name, score: x.score, me: x.sid === me };
       if (all) o.cls = x.cls;
       return o;
     });
   return { ok: true, rank: list };
 }
 
+function logRows_() {
+  const sh = logSheet_();
+  const n = sh.getLastRow() - 1;
+  if (n <= 0) return [];
+  return sh.getRange(2, 1, n, 12).getValues().map(function (r) {
+    let det = [];
+    try { det = JSON.parse(r[11] || '[]'); } catch (e) {}
+    return { date: dateStr_(r[0] || r[1]), sid: String(r[2]), name: String(r[3]), cls: String(r[5]), num: Number(r[6]),
+             score: Number(r[7]), det: det };
+  });
+}
+
 // 선생님용 통계
 function stats_(p) {
   const cls = String(p.cls || 'all'), date = String(p.date || 'all');
-  const rows = rows_().filter(function (r) {
+  const rows = logRows_().filter(function (r) {
     return (cls === 'all' || r.cls === cls) && (date === 'all' || r.date === date);
   });
   const groups = {}; VALID_GROUPS.forEach(function (g) { groups[g] = { g: g, total: 0, wrong: 0 }; });
   const verbs = {}, students = {};
   rows.forEach(function (r) {
-    const key = r.cls + '-' + r.num;
-    const st = students[key] || (students[key] = { cls: r.cls, num: r.num, nick: r.nick, plays: 0, best: 0, total: 0, okc: 0, gw: {} });
-    st.plays++; st.best = Math.max(st.best, r.score); st.nick = r.nick;
+    const st = students[r.sid] || (students[r.sid] = { sid: r.sid, name: r.name, cls: r.cls, num: r.num, plays: 0, best: 0, total: 0, okc: 0, gw: {} });
+    st.plays++; st.best = Math.max(st.best, r.score); st.name = r.name;
     r.det.forEach(function (d) {
       if (!groups[d.g]) return;
       groups[d.g].total++; st.total++;
@@ -134,9 +167,9 @@ function stats_(p) {
     const s = students[k];
     let weak = '', wmax = 0;
     Object.keys(s.gw).forEach(function (g) { if (s.gw[g] > wmax) { wmax = s.gw[g]; weak = g; } });
-    return { cls: s.cls, num: s.num, nick: s.nick, plays: s.plays, best: s.best,
+    return { sid: s.sid, name: s.name, cls: s.cls, plays: s.plays, best: s.best,
              acc: s.total ? Math.round(s.okc / s.total * 100) : 0, weak: weak, weakCount: wmax };
-  }).sort(function (a, b) { return a.cls - b.cls || a.num - b.num; });
+  }).sort(function (a, b) { return a.sid.localeCompare(b.sid); });
   const scores = rows.map(function (r) { return r.score; });
   return {
     ok: true,
